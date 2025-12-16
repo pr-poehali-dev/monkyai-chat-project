@@ -2,10 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import Icon from '@/components/ui/icon';
 import { cn } from '@/lib/utils';
+import SettingsDialog from '@/components/SettingsDialog';
+import { useToast } from '@/hooks/use-toast';
 
 interface Message {
   id: string;
@@ -32,13 +34,18 @@ const Index = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
-      content: 'Привет! Я MonkyAI — твой персональный AI-ассистент. Чем могу помочь?',
+      content: 'Привет! Я MonkyAI — твой персональный AI-ассистент с математикой и веб-поиском. Чем могу помочь?',
       sender: 'ai',
       timestamp: new Date(),
     },
   ]);
   const [inputValue, setInputValue] = useState('');
   const [isRecording, setIsRecording] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [userAvatar, setUserAvatar] = useState('');
+  const [userName, setUserName] = useState('Пользователь');
+  const [backgroundImage, setBackgroundImage] = useState('');
+  const { toast } = useToast();
   const [chats] = useState<Chat[]>([
     { id: '1', title: 'Новый чат', lastMessage: 'Привет! Я MonkyAI...', timestamp: new Date() },
     { id: '2', title: 'Креативные идеи', lastMessage: 'Предложи идеи для...', timestamp: new Date(Date.now() - 3600000) },
@@ -53,8 +60,8 @@ const Index = () => {
     }
   }, [messages]);
 
-  const handleSendMessage = () => {
-    if (!inputValue.trim()) return;
+  const handleSendMessage = async () => {
+    if (!inputValue.trim() || isSending) return;
 
     const newMessage: Message = {
       id: Date.now().toString(),
@@ -64,17 +71,48 @@ const Index = () => {
     };
 
     setMessages([...messages, newMessage]);
+    const currentInput = inputValue;
     setInputValue('');
+    setIsSending(true);
 
-    setTimeout(() => {
+    try {
+      const response = await fetch('https://functions.poehali.dev/0316b8cb-8b20-416f-876e-d1efc71a599e', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            ...messages.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.content })),
+            { role: 'user', content: currentInput }
+          ]
+        }),
+      });
+
+      if (!response.ok) throw new Error('AI request failed');
+
+      const data = await response.json();
       const aiResponse: Message = {
         id: (Date.now() + 1).toString(),
-        content: 'Это демонстрационный ответ от MonkyAI. В полной версии здесь будет реальный ответ от AI-модели!',
+        content: data.response || 'Извините, не удалось получить ответ.',
         sender: 'ai',
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, aiResponse]);
-    }, 1000);
+    } catch (error) {
+      toast({
+        title: 'Ошибка',
+        description: 'Не удалось отправить сообщение. Проверьте OPENAI_API_KEY.',
+        variant: 'destructive'
+      });
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        content: 'Не удалось получить ответ. Убедитесь, что OPENAI_API_KEY добавлен в секреты проекта.',
+        sender: 'ai',
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const handleTemplateClick = (prompt: string) => {
@@ -93,8 +131,17 @@ const Index = () => {
   };
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
-      <aside className="hidden lg:flex flex-col w-80 border-r border-border bg-sidebar">
+    <div 
+      className="flex h-screen bg-background overflow-hidden relative"
+      style={{
+        backgroundImage: backgroundImage && !backgroundImage.startsWith('linear') ? `url(${backgroundImage})` : 'none',
+        background: backgroundImage && backgroundImage.startsWith('linear') ? backgroundImage : undefined,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }}
+    >
+      {backgroundImage && <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" />}
+      <aside className="hidden lg:flex flex-col w-80 border-r border-border bg-sidebar relative z-10">
         <div className="p-6 border-b border-sidebar-border">
           <h1 className="text-2xl font-bold text-gradient">MonkyAI Chat</h1>
           <p className="text-sm text-sidebar-foreground/70 mt-1">Твой креативный помощник</p>
@@ -129,22 +176,34 @@ const Index = () => {
         </ScrollArea>
 
         <div className="p-4 border-t border-sidebar-border space-y-2">
-          <Button variant="ghost" className="w-full justify-start">
-            <Icon name="Settings" className="mr-2" size={18} />
-            Настройки
-          </Button>
+          <SettingsDialog
+            userAvatar={userAvatar}
+            userName={userName}
+            backgroundImage={backgroundImage}
+            onAvatarChange={setUserAvatar}
+            onNameChange={setUserName}
+            onBackgroundChange={setBackgroundImage}
+          />
           <Button variant="ghost" className="w-full justify-start">
             <Icon name="HelpCircle" className="mr-2" size={18} />
             Справка
           </Button>
-          <Button variant="ghost" className="w-full justify-start">
-            <Icon name="User" className="mr-2" size={18} />
-            Профиль
-          </Button>
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-sidebar-accent/50">
+            <Avatar className="h-10 w-10 border-2 border-primary/20">
+              <AvatarImage src={userAvatar} />
+              <AvatarFallback className="bg-gradient-to-br from-primary to-accent text-white">
+                {userName.charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{userName}</p>
+              <p className="text-xs text-muted-foreground">Онлайн</p>
+            </div>
+          </div>
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col">
+      <main className="flex-1 flex flex-col relative z-10">
         <header className="flex items-center justify-between p-4 border-b border-border glassmorphism lg:hidden">
           <Sheet>
             <SheetTrigger asChild>
@@ -215,7 +274,10 @@ const Index = () => {
                 </div>
                 {message.sender === 'user' && (
                   <Avatar className="h-10 w-10 border-2 border-accent/20">
-                    <AvatarFallback className="bg-accent">U</AvatarFallback>
+                    <AvatarImage src={userAvatar} />
+                    <AvatarFallback className="bg-accent">
+                      {userName.charAt(0).toUpperCase()}
+                    </AvatarFallback>
                   </Avatar>
                 )}
               </div>
@@ -283,9 +345,13 @@ const Index = () => {
                 onClick={handleSendMessage}
                 size="icon"
                 className="shrink-0 bg-gradient-to-br from-primary to-accent hover:opacity-90"
-                disabled={!inputValue.trim()}
+                disabled={!inputValue.trim() || isSending}
               >
-                <Icon name="Send" size={20} />
+                {isSending ? (
+                  <Icon name="Loader2" size={20} className="animate-spin" />
+                ) : (
+                  <Icon name="Send" size={20} />
+                )}
               </Button>
             </div>
 
